@@ -31,9 +31,13 @@ public class GestorCarga {
             ZMQ.Socket receiver = context.createSocket(ZMQ.REP);
             receiver.bind("tcp://*:" + PUERTO_PS);
 
-            // Socket PUB para publicar mensajes a actores (devolución y renovación)
-            ZMQ.Socket publisher = context.createSocket(ZMQ.PUB);
-            publisher.bind("tcp://*:" + PUERTO_PUB);
+        // Socket para publicar mensajes a los actores (devolución y renovación)
+        ZMQ.Socket publisher = context.socket(ZMQ.PUB);
+        publisher.bind("tcp://*:5556");
+
+        // Socket PUSH para enviar tareas de préstamo al ActorPrestamo
+        ZMQ.Socket pusher = context.socket(ZMQ.PUSH);
+        pusher.bind("tcp://*:5557");
 
             // Socket PUSH para enviar tareas de préstamo
             ZMQ.Socket pusher = context.createSocket(ZMQ.PUSH);
@@ -84,9 +88,11 @@ public class GestorCarga {
                     procesarRenovacion(receiver, publisher, libro, usuario);
                     break;
 
-                case "PRESTAMO":
-                    procesarPrestamo(receiver, pusher, libro, usuario, timestampInicio);
-                    break;
+                    case "PRESTAMO":
+                        // Enviar tarea de préstamo mediante PUSH al ActorPrestamo
+                        pusher.send("Libro " + libro + " solicitado por " + usuario);
+                        receiver.send("Préstamo procesado correctamente para " + libro);
+                        break;
 
                 default:
                     receiver.send("ERROR|Operación no reconocida: " + operacion);
