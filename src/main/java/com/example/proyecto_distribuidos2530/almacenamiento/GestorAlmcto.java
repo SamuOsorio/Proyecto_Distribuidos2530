@@ -3,6 +3,20 @@ package com.example.proyecto_distribuidos2530.almacenamiento;
 import com.example.proyecto_distribuidos2530.basedatos.Database;
 import org.zeromq.ZMQ;
 
+/**
+ * Gestor de Almacenamiento - Administra bases de datos primaria y secundaria
+ * 
+ * Funcionalidades:
+ * - Gestiona BD primaria y réplica secundaria local
+ * - Sincronización asíncrona con reintentos (3 intentos)
+ * - Health check endpoint para detección de fallos
+ * - Operaciones: PRESTAMO, DEVOLUCION, RENOVACION, CONSULTA
+ * 
+ * Puertos:
+ * - 5558 (SEDE1) / 6558 (SEDE2): Operaciones BD
+ * - 5559 (SEDE1) / 6559 (SEDE2): Health check
+ * 
+ */
 public class GestorAlmcto {
     private Database bdPrimaria;
     private Database bdSecundaria;
@@ -84,12 +98,13 @@ public class GestorAlmcto {
 
     public static void main(String[] args) {
         if (args.length < 2) {
-            System.out.println("Uso: java GestorAlmcto <sede> <es_primario>");
+            System.out.println("Uso: java GestorAlmcto <sede> <es_primario> [multithread]");
             return;
         }
 
         String sede = args[0];
         boolean esPrimario = Boolean.parseBoolean(args[1]);
+        boolean multithread = args.length > 2 ? Boolean.parseBoolean(args[2]) : false;
         GestorAlmcto gestor = new GestorAlmcto(sede, esPrimario);
 
         // Servicio ZeroMQ para recibir operaciones de los Actores
@@ -104,6 +119,7 @@ public class GestorAlmcto {
         System.out.println("==============================================");
         System.out.println("GestorAlmcto " + sede + " listo (" +
                 (esPrimario ? "PRIMARIO" : "SECUNDARIO") + ")");
+        System.out.println("Modo: " + (multithread ? "MULTIHILO" : "SERIAL"));
         System.out.println("Puerto operaciones: 5558");
         System.out.println("Puerto health check: 5559");
         System.out.println("==============================================\n");
@@ -133,37 +149,20 @@ public class GestorAlmcto {
                     continue;
                 }
                 
-                String[] partes = request.split("\\|");
-                String operacion = partes[0];
-                String respuesta = "";
-
-                switch (operacion.toUpperCase()) {
-                    case "PRESTAMO":
-                        boolean exito = gestor.prestarLibro(partes[1]);
-                        respuesta = exito ? "PRESTAMO_OK" : "PRESTAMO_NOK";
-                        break;
-
-                    case "DEVOLUCION":
-                        gestor.devolverLibro(partes[1]);
-                        respuesta = "DEVOLUCION_OK";
-                        break;
-
-                    case "RENOVACION":
-                        gestor.renovarLibro(partes[1]);
-                        respuesta = "RENOVACION_OK";
-                        break;
-
-                    case "CONSULTA":
-                        int disponibles = gestor.getCopiasDisponibles(partes[1]);
-                        respuesta = "DISPONIBLES_" + disponibles;
-                        break;
-                        
-                    default:
-                        respuesta = "ERROR|Operación desconocida: " + operacion;
-                        System.err.println("Operación desconocida: " + operacion);
+                if (multithread) {
+                    // Procesar en thread separado para permitir concurrencia
+                    final String req = request;
+                    new Thread(() -> {
+                        String respuesta = procesarPeticion(gestor, req);
+                        synchronized (receiver) {
+                            receiver.send(respuesta);
+                        }
+                    }).start();
+                } else {
+                    // Procesamiento serial (uno a la vez)
+                    String respuesta = procesarPeticion(gestor, request);
+                    receiver.send(respuesta);
                 }
-
-                receiver.send(respuesta);
                 
             } catch (Exception e) {
                 System.err.println("[ERROR] Procesando petición: " + e.getMessage());
@@ -178,5 +177,63 @@ public class GestorAlmcto {
         receiver.close();
         healthCheck.close();
         context.close();
+    }
+    
+    private static String procesarPeticion(GestorAlmcto gestor, String request) {
+        try {
+            String[] partes = request.split("\\|");
+            String operacion = partes[0];
+            String respuesta = "";
+
+            switch (operacion.toUpperCase()) {
+                    case "PRESTAMO":
+                        String codigoP = partes[1];
+                        int antesP = gestor.getCopiasDisponibles(codigoP);
+                        boolean exito = gestor.prestarLibro(codigoP);
+                        int despuesP = gestor.getCopiasDisponibles(codigoP);
+                        respuesta = exito ? "PRESTAMO_OK" : "PRESTAMO_NOK";
+                        System.out.println("[BD-PRIMARIA] Préstamo " + codigoP + 
+                            " -> Copias: " + antesP + " → " + despuesP);
+                        System.out.println("[BD-SECUNDARIA] Sincronizando réplica...");
+                        break;
+
+                    case "DEVOLUCION":
+                        String codigoD = partes[1];
+                        int antesD = gestor.getCopiasDisponibles(codigoD);
+                        gestor.devolverLibro(codigoD);
+                        int despuesD = gestor.getCopiasDisponibles(codigoD);
+                        respuesta = "DEVOLUCION_OK";
+                        System.out.println("[BD-PRIMARIA] Devolución " + codigoD + 
+                            " -> Copias: " + antesD + " → " + despuesD);
+                        System.out.println("[BD-SECUNDARIA] Sincronizando réplica...");
+                        break;
+
+                    case "RENOVACION":
+                        String codigoR = partes[1];
+                        gestor.renovarLibro(codigoR);
+                        respuesta = "RENOVACION_OK";
+                        System.out.println("[BD-PRIMARIA] Renovación " + codigoR + " (estado mantenido)");
+                        System.out.println("[BD-SECUNDARIA] Sincronizando réplica...");
+                        break;
+
+                    case "CONSULTA":
+                        String codigoC = partes[1];
+                        int disponibles = gestor.getCopiasDisponibles(codigoC);
+                        respuesta = "DISPONIBLES_" + disponibles;
+                        System.out.println("[BD-PRIMARIA] Consulta " + codigoC + 
+                            " -> " + disponibles + " copias disponibles");
+                        break;
+                        
+                    default:
+                        respuesta = "ERROR|Operación desconocida: " + operacion;
+                        System.err.println("Operación desconocida: " + operacion);
+                }
+                
+                return respuesta;
+                
+        } catch (Exception e) {
+            System.err.println("[ERROR] Procesando petición: " + e.getMessage());
+            return "ERROR|" + e.getMessage();
+        }
     }
 }

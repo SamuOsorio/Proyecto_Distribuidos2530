@@ -4,8 +4,24 @@ import org.zeromq.ZMQ;
 import org.zeromq.ZContext;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-//Actor de Devolución - Procesa devoluciones de forma asíncrona, Patrón: Subscriber (Pub/Sub)
 
+/**
+ * Actor Devolución - Procesa devoluciones de libros
+ * 
+ * Patrón: SUB (suscripción a tópico 'devolucion') + REQ (actualiza BD)
+ * 
+ * Tolerancia a fallos:
+ * - 3 reintentos por operación con timeout de 5s
+ * - Health check antes de cada operación
+ * - Failover automático a SEDE2 después de 2 fallos consecutivos
+ * - Reconexión dinámica de sockets para cambio de sede
+ * 
+ * Puertos:
+ * - 5556: SUB desde GestorCarga (tópico: devolucion)
+ * - 5558/6558: REQ a GestorAlmacenamiento (SEDE1/SEDE2)
+ * - 5559/6559: Health check
+ * 
+ */
 public class ActorDevolucion {
     private static final String PUERTO_SUB = "5556";
     private static final String PUERTO_BD = "5558";

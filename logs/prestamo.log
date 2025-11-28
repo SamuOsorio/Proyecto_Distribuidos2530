@@ -216,3 +216,4 @@ SEDE RESPALDO: tcp://localhost:6558
 [TAREA] ActorPrestamo recibió: LIB1597|U197|1764291324827
   [BD] DISPONIBLES_-1
   [!] Préstamo denegado - No hay copias disponibles de LIB1597
+^C

@@ -5,6 +5,22 @@ import org.zeromq.ZContext;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+/**
+ * Actor Renovación - Procesa renovaciones de préstamos
+ * 
+ * Patrón: SUB (suscripción a tópico 'renovacion') + REQ (actualiza BD)
+ * 
+ * Tolerancia a fallos:
+ * - 3 reintentos por operación con timeout de 5s
+ * - Health check antes de cada operación
+ * - Failover automático a SEDE2 después de 2 fallos consecutivos
+ * - Reconexión dinámica de sockets para cambio de sede
+ * 
+ * Puertos:
+ * - 5556: SUB desde GestorCarga (tópico: renovacion)
+ * - 5558/6558: REQ a GestorAlmacenamiento (SEDE1/SEDE2)
+ * - 5559/6559: Health check
+ */
 public class ActorRenovacion {
     private static final String PUERTO_SUB = "5556";
     private static final String PUERTO_BD = "5558";
